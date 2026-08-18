@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>GazeSpeak — Eye Tracking Communication Keyboard</title>
+<meta name="description" content="An eye-tracking dwell keyboard for hands-free communication, built for patients with limited mobility. Uses the mobile front camera to detect gaze and type by dwelling on a key.">
+
+<!-- Fonts & Icons -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+
+<!-- App styles -->
+<link rel="stylesheet" href="css/style.css">
+
+<!-- WebGazer.js — highest-accuracy open browser-based eye tracking (TFFacemesh tracker + ridge regression + Kalman filtering) -->
+<script src="https://cdn.jsdelivr.net/npm/webgazer@3.3.1/dist/webgazer.min.js" defer></script>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ TOP: OUTPUT / MESSAGE PANEL ============ -->
+  <header id="output-panel">
+    <div id="output-top-row">
+      <div id="app-brand"><i class="fa-solid fa-eye"></i> GazeSpeak</div>
+
+      <div id="status-cluster">
+        <span id="tracking-status" class="status-pill status-off"><i class="fa-solid fa-circle"></i> Tracking Off</span>
+        <span id="calib-status" class="status-pill status-off"><i class="fa-solid fa-bullseye"></i> Not Calibrated</span>
+      </div>
+
+      <div id="top-controls">
+        <button class="dwell-target icon-btn" id="start-btn" data-action="start-tracking" title="Start Eye Tracking">
+          <i class="fa-solid fa-power-off"></i><span>Start</span>
+        </button>
+        <button class="dwell-target icon-btn" id="calibrate-btn" data-action="open-calibration" title="Calibrate" disabled>
+          <i class="fa-solid fa-bullseye"></i><span>Calibrate</span>
+        </button>
+        <button class="dwell-target icon-btn" id="pointer-mode-btn" data-action="toggle-pointer-mode" title="Pointer / Switch fallback mode">
+          <i class="fa-solid fa-arrow-pointer"></i><span>Pointer</span>
+        </button>
+        <button class="dwell-target icon-btn" id="settings-btn" data-action="open-settings" title="Settings">
+          <i class="fa-solid fa-gear"></i><span>Settings</span>
+        </button>
+        <button class="dwell-target icon-btn" id="help-btn" data-action="open-help" title="Help">
+          <i class="fa-solid fa-circle-question"></i><span>Help</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="output-text-row">
+      <textarea id="output-text" readonly aria-label="Typed message" placeholder="Your message will appear here..."></textarea>
+      <div id="output-actions">
+        <button class="dwell-target action-btn speak" id="speak-btn" data-action="speak" title="Speak message">
+          <i class="fa-solid fa-volume-high"></i><span>Speak</span>
+        </button>
+        <button class="dwell-target action-btn" id="backspace-word-btn" data-action="clear-word" title="Delete last word">
+          <i class="fa-solid fa-delete-left"></i><span>Word</span>
+        </button>
+        <button class="dwell-target action-btn danger" id="clear-btn" data-action="clear-text" title="Clear all">
+          <i class="fa-solid fa-trash"></i><span>Clear</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="prediction-bar" aria-label="Word suggestions"></div>
+  </header>
+
+  <!-- ============ MAIN: KEYBOARD ============ -->
+  <main id="keyboard-container">
+    <nav id="page-tabs">
+      <button class="dwell-target tab-btn active" data-page="letters" data-action="switch-page">Keyboard</button>
+      <button class="dwell-target tab-btn" data-page="phrases" data-action="switch-page">Quick Phrases</button>
+    </nav>
+
+    <section id="keyboard" class="page active" role="application" aria-label="Eye tracking keyboard"></section>
+    <section id="phrases-page" class="page" aria-label="Quick phrases"></section>
+  </main>
+
+  <footer id="bottom-hint">
+    Look at a key and hold your gaze steady — it will fill and type automatically.
+  </footer>
+</div>
+
+<!-- ============ GAZE POINTER ============ -->
+<div id="gaze-dot"></div>
+
+<!-- ============ DWELL PROGRESS RING (reused, repositioned via JS) ============ -->
+<svg id="dwell-ring" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
+  <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+  <circle class="ring-progress" cx="60" cy="60" r="52"></circle>
+</svg>
+
+<!-- ============ START / WELCOME OVERLAY ============ -->
+<div id="welcome-overlay" class="overlay">
+  <div class="overlay-card">
+    <h1><i class="fa-solid fa-eye"></i> GazeSpeak</h1>
+    <p class="lead">A hands-free, eye-controlled communication keyboard.</p>
+    <ol class="steps-list">
+      <li>Prop up your phone/tablet at eye level, about 30–40&nbsp;cm away.</li>
+      <li>Make sure your face is well lit and the front camera can see both eyes.</li>
+      <li>Tap <b>Start Eye Tracking</b> and allow camera access.</li>
+      <li>Complete the short calibration by looking steadily at each dot.</li>
+      <li>Type by looking at a key and holding your gaze until it fills.</li>
+    </ol>
+    <div class="overlay-actions">
+      <button class="dwell-target big-btn primary" id="welcome-start-btn" data-action="start-tracking">
+        <i class="fa-solid fa-camera"></i> Start Eye Tracking
+      </button>
+      <button class="dwell-target big-btn" id="welcome-pointer-btn" data-action="toggle-pointer-mode">
+        <i class="fa-solid fa-arrow-pointer"></i> Use Pointer / Switch Instead
+      </button>
+    </div>
+    <p class="fine-print">No video ever leaves your device — all eye tracking runs locally in your browser.</p>
+  </div>
+</div>
+
+<!-- ============ CALIBRATION OVERLAY ============ -->
+<div id="calibration-overlay" class="overlay hidden">
+  <div id="calib-instructions">
+    <h2 id="calib-title">Calibration</h2>
+    <p id="calib-subtitle">Keep your head still and follow the dot with your eyes only.</p>
+    <p id="calib-progress-text">Point 1 of 9</p>
+  </div>
+
+  <button class="dwell-target overlay-close" id="calib-skip-btn" data-action="skip-calibration" title="Cancel calibration">
+    <i class="fa-solid fa-xmark"></i>
+  </button>
+
+  <div id="calib-dot-wrap">
+    <div id="calib-dot"><div id="calib-dot-inner"></div></div>
+  </div>
+
+  <!-- Result screen shown after validation -->
+  <div id="calib-result" class="hidden">
+    <div class="overlay-card">
+      <h2 id="calib-result-title">Calibration Complete</h2>
+      <div id="calib-accuracy-bar-wrap">
+        <div id="calib-accuracy-bar"><div id="calib-accuracy-fill"></div></div>
+      </div>
+      <p id="calib-accuracy-text">Estimated accuracy: —</p>
+      <p id="calib-accuracy-advice"></p>
+      <div class="overlay-actions">
+        <button class="dwell-target big-btn primary" id="calib-continue-btn" data-action="finish-calibration">
+          <i class="fa-solid fa-check"></i> Start Typing
+        </button>
+        <button class="dwell-target big-btn" id="calib-retry-btn" data-action="open-calibration">
+          <i class="fa-solid fa-rotate"></i> Recalibrate
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SETTINGS MODAL ============ -->
+<div id="settings-modal" class="overlay hidden">
+  <div class="overlay-card settings-card">
+    <div class="settings-header">
+      <h2><i class="fa-solid fa-gear"></i> Settings</h2>
+      <button class="dwell-target overlay-close" data-action="close-settings"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="settings-body">
+
+      <div class="setting-row">
+        <label>Dwell Time (how long to look at a key)</label>
+        <div class="stepper" id="dwell-time-options">
+          <button class="dwell-target chip-btn" data-dwell="800">0.8s</button>
+          <button class="dwell-target chip-btn" data-dwell="1200">1.2s</button>
+          <button class="dwell-target chip-btn" data-dwell="1600">1.6s</button>
+          <button class="dwell-target chip-btn active" data-dwell="2000">2.0s</button>
+          <button class="dwell-target chip-btn" data-dwell="2500">2.5s</button>
+          <button class="dwell-target chip-btn" data-dwell="3000">3.0s</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label>Gaze Smoothing</label>
+        <div class="stepper" id="smoothing-options">
+          <button class="dwell-target chip-btn" data-smoothing="0.5">Responsive</button>
+          <button class="dwell-target chip-btn active" data-smoothing="0.25">Balanced</button>
+          <button class="dwell-target chip-btn" data-smoothing="0.12">Very Smooth</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label>Key Size</label>
+        <div class="stepper" id="keysize-options">
+          <button class="dwell-target chip-btn" data-keysize="0.85">Normal</button>
+          <button class="dwell-target chip-btn active" data-keysize="1">Large</button>
+          <button class="dwell-target chip-btn" data-keysize="1.2">Extra Large</button>
+        </div>
+      </div>
+
+      <div class="setting-row toggle-row">
+        <label>Show gaze pointer dot</label>
+        <button class="dwell-target toggle-btn active" id="toggle-gaze-dot" data-toggle="showGazeDot"><span class="knob"></span></button>
+      </div>
+
+      <div class="setting-row toggle-row">
+        <label>Sound feedback on key select</label>
+        <button class="dwell-target toggle-btn active" id="toggle-sound" data-toggle="soundFeedback"><span class="knob"></span></button>
+      </div>
+
+      <div class="setting-row toggle-row">
+        <label>Vibration feedback (mobile)</label>
+        <button class="dwell-target toggle-btn active" id="toggle-vibration" data-toggle="vibration"><span class="knob"></span></button>
+      </div>
+
+      <div class="setting-row toggle-row">
+        <label>Speak phrases immediately when selected</label>
+        <button class="dwell-target toggle-btn active" id="toggle-autospeak" data-toggle="autoSpeakPhrases"><span class="knob"></span></button>
+      </div>
+
+      <div class="setting-row toggle-row">
+        <label>High contrast mode</label>
+        <button class="dwell-target toggle-btn" id="toggle-contrast" data-toggle="highContrast"><span class="knob"></span></button>
+      </div>
+
+      <div class="setting-row toggle-row">
+        <label>Show camera preview</label>
+        <button class="dwell-target toggle-btn" id="toggle-camera-preview" data-toggle="showCameraPreview"><span class="knob"></span></button>
+      </div>
+
+      <div class="setting-row">
+        <label>Speech Rate</label>
+        <div class="stepper" id="rate-options">
+          <button class="dwell-target chip-btn" data-rate="0.7">Slow</button>
+          <button class="dwell-target chip-btn active" data-rate="1">Normal</button>
+          <button class="dwell-target chip-btn" data-rate="1.3">Fast</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label>Voice</label>
+        <div class="stepper voice-stepper">
+          <button class="dwell-target chip-btn" id="voice-prev-btn" data-action="voice-prev"><i class="fa-solid fa-chevron-left"></i></button>
+          <span id="voice-name-display">Default</span>
+          <button class="dwell-target chip-btn" id="voice-next-btn" data-action="voice-next"><i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+      </div>
+
+      <button class="dwell-target big-btn" id="recalibrate-btn" data-action="open-calibration">
+        <i class="fa-solid fa-bullseye"></i> Recalibrate Eye Tracking
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ HELP MODAL ============ -->
+<div id="help-modal" class="overlay hidden">
+  <div class="overlay-card">
+    <div class="settings-header">
+      <h2><i class="fa-solid fa-circle-question"></i> How to use GazeSpeak</h2>
+      <button class="dwell-target overlay-close" data-action="close-help"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <ul class="help-list">
+      <li><b>Setup:</b> Mount the device steadily at eye level, 30–40cm from the face, in good even lighting.</li>
+      <li><b>Calibration:</b> Look only with your eyes (avoid head movement) at each dot until it disappears. Do this in the same position you will use for typing.</li>
+      <li><b>Typing:</b> Look at a key — a ring will fill around it. When full, the key is typed. Look away and back to repeat a key.</li>
+      <li><b>Word suggestions:</b> Predicted words appear above the keyboard — look at one to insert it instantly.</li>
+      <li><b>Quick Phrases:</b> Switch tabs to access common needs like "Call nurse" or "I am in pain" with a single dwell.</li>
+      <li><b>Losing accuracy?</b> Open Settings → Recalibrate anytime, especially after moving the device or changing lighting.</li>
+      <li><b>No camera?</b> Use Pointer Mode to control the keyboard with a mouse, touch, switch device, or head-mouse instead.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ TRACKING LOST BANNER ============ -->
+<div id="tracking-lost-banner" class="hidden"><i class="fa-solid fa-triangle-exclamation"></i> Face not detected — please re-center in view</div>
+
+<!-- App scripts -->
+<script src="js/keyboard-data.js"></script>
+<script src="js/tts.js"></script>
+<script src="js/calibration.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
